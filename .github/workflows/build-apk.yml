@@ -13,13 +13,27 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.6'
-      - name: Create and inject LiveDrop
+      - name: Build LiveDrop
         run: |
           flutter create livedrop
           cd livedrop
           flutter pub add go_router provider google_fonts qr_flutter shared_preferences fl_chart intl uuid
           unzip -o ../livedrop.zip "livedrop/lib/*" -d ../tmp/
           cp -r ../tmp/livedrop/lib/* lib/
+          python3 << 'PY'
+import os
+bad = ['geolocator','firebase','image_picker','cached_network','url_launcher','mobile_scanner','flutter_stripe','socket_io','hive','lottie','shimmer','dio','retrofit','connectivity','device_info','package_info','flutter_svg','hugeicons','animations','flutter_riverpod','flutter_secure']
+for root,dirs,files in os.walk('lib'):
+    for f in files:
+        if not f.endswith('.dart'):
+            continue
+        p = os.path.join(root,f)
+        lines = open(p).readlines()
+        clean = [l for l in lines if not any(b in l for b in bad)]
+        open(p,'w').writelines(clean)
+print("Nettoyage OK")
+PY
+          mkdir -p assets/images assets/icons
           flutter build apk --release --no-tree-shake-icons
       - uses: actions/upload-artifact@v4
         with:
