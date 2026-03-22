@@ -18,24 +18,426 @@ jobs:
           flutter create livedrop
           cd livedrop
           flutter pub add go_router provider google_fonts qr_flutter shared_preferences fl_chart intl uuid
-          unzip -o ../livedrop.zip "livedrop/lib/*" -d ../tmp/
-          cp -r ../tmp/livedrop/lib/* lib/
-          python3 << 'PY'
-import os
-bad = ['geolocator','firebase','image_picker','cached_network','url_launcher','mobile_scanner','flutter_stripe','socket_io','hive','lottie','shimmer','dio','retrofit','connectivity','device_info','package_info','flutter_svg','hugeicons','animations','flutter_riverpod','flutter_secure']
-for root,dirs,files in os.walk('lib'):
-    for f in files:
-        if not f.endswith('.dart'):
-            continue
-        p = os.path.join(root,f)
-        lines = open(p).readlines()
-        clean = [l for l in lines if not any(b in l for b in bad)]
-        open(p,'w').writelines(clean)
-print("Nettoyage OK")
-PY
           mkdir -p assets/images assets/icons
-          flutter build apk --release --no-tree-shake-icons
-      - uses: actions/upload-artifact@v4
-        with:
-          name: LiveDrop-APK
-          path: livedrop/build/app/outputs/flutter-apk/app-release.apk
+          cat > lib/main.dart << 'DART'
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+  ));
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AppState()),
+      ],
+      child: const LiveDropApp(),
+    ),
+  );
+}
+
+// ─── COLORS ───────────────────────────────
+class C {
+  static const bg = Color(0xFF080C14);
+  static const s1 = Color(0xFF0D1220);
+  static const s2 = Color(0xFF131926);
+  static const s3 = Color(0xFF1A2235);
+  static const cyan = Color(0xFF00C8FF);
+  static const yellow = Color(0xFFF5E642);
+  static const green = Color(0xFF00F59B);
+  static const red = Color(0xFFFF3D5A);
+  static const orange = Color(0xFFFF8C42);
+  static const purple = Color(0xFF8B5CF6);
+  static const t1 = Color(0xFFDCE4F0);
+  static const t2 = Color(0xFF5E6E8A);
+  static const t3 = Color(0xFF3A4560);
+  static const border = Color(0x12FFFFFF);
+  static const dark = Color(0xFF060C16);
+}
+
+// ─── STATE ────────────────────────────────
+enum Role { client, driver }
+enum DeliveryStatus { idle, searching, active, delivered }
+
+class DeliveryData {
+  final String pickup;
+  final String dropoff;
+  final String type;
+  final double price;
+  final double driverEarnings;
+  DeliveryData({required this.pickup, required this.dropoff, required this.type, required this.price, required this.driverEarnings});
+}
+
+class AppState extends ChangeNotifier {
+  Role role = Role.client;
+  bool isLoggedIn = false;
+  bool driverOnline = true;
+  DeliveryStatus deliveryStatus = DeliveryStatus.idle;
+  DeliveryData? activeDelivery;
+  double driverEarnings = 47.50;
+  int driverDeliveries = 6;
+  double clientRating = 0;
+  List<Map<String, dynamic>> history = [
+    {'from': 'Bastille', 'to': 'Opéra', 'type': '📦', 'price': 8.06, 'min': 18},
+    {'from': 'Nation', 'to': 'Vincennes', 'type': '🍔', 'price': 12.30, 'min': 22},
+    {'from': 'IKEA', 'to': 'Montreuil', 'type': '🛋️', 'price': 45.00, 'min': 45},
+  ];
+
+  void login(Role r) { role = r; isLoggedIn = true; notifyListeners(); }
+  void logout() { isLoggedIn = false; notifyListeners(); }
+  void toggleDriverOnline() { driverOnline = !driverOnline; notifyListeners(); }
+  void createDelivery(String a, String b, String type, double price) {
+    activeDelivery = DeliveryData(pickup: a, dropoff: b, type: type, price: price, driverEarnings: price * 0.8);
+    deliveryStatus = DeliveryStatus.searching;
+    notifyListeners();
+    Future.delayed(const Duration(seconds: 3), () {
+      deliveryStatus = DeliveryStatus.active;
+      notifyListeners();
+    });
+  }
+  void completeDelivery() {
+    if (activeDelivery != null) {
+      history.insert(0, {'from': activeDelivery!.pickup, 'to': activeDelivery!.dropoff, 'type': activeDelivery!.type, 'price': activeDelivery!.price, 'min': 18});
+      driverEarnings += activeDelivery!.driverEarnings;
+      driverDeliveries++;
+    }
+    deliveryStatus = DeliveryStatus.delivered;
+    notifyListeners();
+  }
+  void resetDelivery() { deliveryStatus = DeliveryStatus.idle; activeDelivery = null; notifyListeners(); }
+  void setRating(double r) { clientRating = r; notifyListeners(); }
+}
+
+// ─── ROUTER ───────────────────────────────
+class LiveDropApp extends StatelessWidget {
+  const LiveDropApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final router = GoRouter(
+      initialLocation: '/splash',
+      routes: [
+        GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
+        GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+        GoRoute(path: '/client', builder: (_, __) => const ClientHome()),
+        GoRoute(path: '/client/create', builder: (_, __) => const CreateDelivery()),
+        GoRoute(path: '/client/finding', builder: (_, __) => const FindingScreen()),
+        GoRoute(path: '/client/tracking', builder: (_, __) => const TrackingScreen()),
+        GoRoute(path: '/client/delivered', builder: (_, __) => const DeliveredScreen()),
+        GoRoute(path: '/client/history', builder: (_, __) => const HistoryScreen()),
+        GoRoute(path: '/driver', builder: (_, __) => const DriverHome()),
+        GoRoute(path: '/driver/mission', builder: (_, __) => const MissionDetail()),
+        GoRoute(path: '/driver/earnings', builder: (_, __) => const EarningsScreen()),
+        GoRoute(path: '/driver/profile', builder: (_, __) => const DriverProfile()),
+      ],
+    );
+
+    return MaterialApp.router(
+      title: 'LiveDrop',
+      debugShowCheckedModeBanner: false,
+      routerConfig: router,
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: C.bg,
+        colorScheme: const ColorScheme.dark(
+          background: C.bg, surface: C.s1, primary: C.cyan,
+          secondary: C.yellow, error: C.red, onPrimary: C.dark,
+        ),
+        textTheme: GoogleFonts.dmSansTextTheme(ThemeData.dark().textTheme),
+        appBarTheme: AppBarTheme(
+          backgroundColor: C.bg, elevation: 0,
+          titleTextStyle: GoogleFonts.syne(fontSize: 18, fontWeight: FontWeight.w700, color: C.t1),
+          systemOverlayStyle: const SystemUiOverlayStyle(statusBarColor: Colors.transparent, statusBarIconBrightness: Brightness.light),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true, fillColor: C.s2,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: C.border)),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: C.border)),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: C.cyan, width: 1.5)),
+          hintStyle: const TextStyle(color: C.t3),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── WIDGETS ──────────────────────────────
+class LDBtn extends StatelessWidget {
+  final String label;
+  final VoidCallback? onTap;
+  final Color? bg;
+  final bool outline;
+  final bool loading;
+  const LDBtn({super.key, required this.label, this.onTap, this.bg, this.outline = false, this.loading = false});
+
+  @override
+  Widget build(BuildContext ctx) {
+    final color = bg ?? (outline ? Colors.transparent : C.cyan);
+    final fg = outline ? C.t2 : C.dark;
+    return GestureDetector(
+      onTap: loading ? null : onTap,
+      child: Container(
+        width: double.infinity, height: 50,
+        decoration: BoxDecoration(
+          color: color, borderRadius: BorderRadius.circular(10),
+          border: outline ? Border.all(color: C.border) : null,
+          boxShadow: !outline && onTap != null ? [BoxShadow(color: color.withOpacity(0.25), blurRadius: 12, offset: const Offset(0, 4))] : null,
+        ),
+        child: Center(
+          child: loading
+            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: C.dark))
+            : Text(label, style: GoogleFonts.syne(fontSize: 14, fontWeight: FontWeight.w700, color: fg, letterSpacing: 0.4)),
+        ),
+      ),
+    );
+  }
+}
+
+class LDCard extends StatelessWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  final Color? borderColor;
+  final Color? bg;
+  const LDCard({super.key, required this.child, this.onTap, this.borderColor, this.bg});
+
+  @override
+  Widget build(BuildContext ctx) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: bg ?? C.s2, borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor ?? C.border),
+      ),
+      child: child,
+    ),
+  );
+}
+
+class LDTag extends StatelessWidget {
+  final String label;
+  final Color color;
+  const LDTag(this.label, this.color, {super.key});
+
+  @override
+  Widget build(BuildContext ctx) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(20), border: Border.all(color: color.withOpacity(0.25))),
+    child: Text(label, style: GoogleFonts.spaceMono(fontSize: 10, color: color)),
+  );
+}
+
+Widget syne(String t, double s, FontWeight w, Color c) => Text(t, style: GoogleFonts.syne(fontSize: s, fontWeight: w, color: c));
+Widget mono(String t, {double s = 10, Color c = C.t2}) => Text(t, style: GoogleFonts.spaceMono(fontSize: s, color: c));
+
+// ─── SPLASH ───────────────────────────────
+class SplashScreen extends StatelessWidget {
+  const SplashScreen({super.key});
+  @override
+  Widget build(BuildContext ctx) => Scaffold(
+    body: Container(
+      decoration: const BoxDecoration(gradient: RadialGradient(center: Alignment(0, -0.4), radius: 1.2, colors: [Color(0xFF0D1A2E), C.bg])),
+      child: SafeArea(child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Column(children: [
+          const Spacer(flex: 2),
+          RichText(text: TextSpan(style: GoogleFonts.syne(fontSize: 52, fontWeight: FontWeight.w800, letterSpacing: -2), children: const [
+            TextSpan(text: 'Live', style: TextStyle(color: C.t1)),
+            TextSpan(text: 'Drop', style: TextStyle(color: C.yellow)),
+          ])),
+          const SizedBox(height: 10),
+          const Text('Livrez n\'importe quoi,\nn\'importe où.', textAlign: TextAlign.center, style: TextStyle(fontSize: 15, color: C.t2, height: 1.6)),
+          const SizedBox(height: 40),
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            _stat('30 min', 'délai moyen'),
+            Container(width: 1, height: 36, color: C.border, margin: const EdgeInsets.symmetric(horizontal: 20)),
+            _stat('4.9 ★', 'livreurs'),
+            Container(width: 1, height: 36, color: C.border, margin: const EdgeInsets.symmetric(horizontal: 20)),
+            _stat('+12k', 'livraisons'),
+          ]),
+          const SizedBox(height: 48),
+          LDBtn(label: 'Commencer →', bg: C.yellow, onTap: () => ctx.go('/login')),
+          const SizedBox(height: 10),
+          LDBtn(label: 'Déjà un compte', outline: true, onTap: () => ctx.go('/login')),
+          const Spacer(),
+          const Text('En continuant, vous acceptez nos CGU', textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: C.t3)),
+          const SizedBox(height: 20),
+        ]),
+      )),
+    ),
+  );
+
+  Widget _stat(String v, String l) => Column(children: [
+    Text(v, style: GoogleFonts.syne(fontSize: 18, fontWeight: FontWeight.w800, color: C.yellow)),
+    Text(l, style: const TextStyle(fontSize: 11, color: C.t2)),
+  ]);
+}
+
+// ─── LOGIN ────────────────────────────────
+class LoginScreen extends StatelessWidget {
+  const LoginScreen({super.key});
+  @override
+  Widget build(BuildContext ctx) {
+    final state = ctx.read<AppState>();
+    return Scaffold(
+      body: SafeArea(child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          GestureDetector(onTap: () => ctx.go('/splash'), child: Container(width: 36, height: 36, decoration: BoxDecoration(color: C.s2, shape: BoxShape.circle, border: Border.all(color: C.border)), child: const Icon(Icons.arrow_back, size: 18, color: C.t1))),
+          const SizedBox(height: 28),
+          syne('Connexion', 28, FontWeight.w700, C.t1),
+          const SizedBox(height: 4),
+          const Text('Choisissez votre profil', style: TextStyle(color: C.t2)),
+          const SizedBox(height: 32),
+          LDCard(
+            onTap: () { state.login(Role.client); ctx.go('/client'); },
+            borderColor: C.yellow.withOpacity(0.3),
+            child: Row(children: [
+              Container(width: 48, height: 48, decoration: BoxDecoration(color: C.yellow.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: const Center(child: Text('📦', style: TextStyle(fontSize: 24)))),
+              const SizedBox(width: 14),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                syne('Mode Client', 15, FontWeight.w600, C.t1),
+                const Text("J'envoie des colis", style: TextStyle(fontSize: 12, color: C.t2)),
+              ])),
+              const Icon(Icons.arrow_forward_ios, size: 14, color: C.t2),
+            ]),
+          ),
+          LDCard(
+            onTap: () { state.login(Role.driver); ctx.go('/driver'); },
+            borderColor: C.cyan.withOpacity(0.3),
+            child: Row(children: [
+              Container(width: 48, height: 48, decoration: BoxDecoration(color: C.cyan.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: const Center(child: Text('🛵', style: TextStyle(fontSize: 24)))),
+              const SizedBox(width: 14),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                syne('Mode Livreur', 15, FontWeight.w600, C.t1),
+                const Text('Je livre des colis', style: TextStyle(fontSize: 12, color: C.t2)),
+              ])),
+              const Icon(Icons.arrow_forward_ios, size: 14, color: C.t2),
+            ]),
+          ),
+        ]),
+      )),
+    );
+  }
+}
+
+// ─── CLIENT HOME ──────────────────────────
+class ClientHome extends StatelessWidget {
+  const ClientHome({super.key});
+  @override
+  Widget build(BuildContext ctx) {
+    final state = ctx.watch<AppState>();
+    return Scaffold(
+      body: SafeArea(child: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Bonjour 👋', style: TextStyle(fontSize: 13, color: C.t2)),
+              syne('Marie D.', 22, FontWeight.w700, C.t1),
+            ]),
+            const Spacer(),
+            GestureDetector(
+              onTap: () { state.logout(); ctx.go('/splash'); },
+              child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: C.s2, borderRadius: BorderRadius.circular(20), border: Border.all(color: C.border)), child: const Text('Déconnexion', style: TextStyle(fontSize: 11, color: C.t2))),
+            ),
+          ]),
+          const SizedBox(height: 20),
+          if (state.deliveryStatus == DeliveryStatus.active || state.deliveryStatus == DeliveryStatus.searching)
+            GestureDetector(
+              onTap: () => ctx.go(state.deliveryStatus == DeliveryStatus.searching ? '/client/finding' : '/client/tracking'),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 14),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(color: C.s2, borderRadius: BorderRadius.circular(16), border: Border.all(color: C.cyan.withOpacity(0.3))),
+                child: Row(children: [
+                  Container(width: 8, height: 8, decoration: const BoxDecoration(shape: BoxShape.circle, color: C.cyan)),
+                  const SizedBox(width: 10),
+                  Text(state.deliveryStatus == DeliveryStatus.searching ? 'Recherche livreur...' : 'Karim en route · ETA 8 min', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                  const Spacer(),
+                  const Text('Voir →', style: TextStyle(fontSize: 12, color: C.cyan)),
+                ]),
+              ),
+            ),
+          LDBtn(label: '+ Nouvelle livraison', bg: C.yellow, onTap: () => ctx.go('/client/create')),
+          const SizedBox(height: 20),
+          Row(children: [
+            Expanded(child: _stat('${state.history.length}', 'LIVRAISONS', C.yellow)),
+            const SizedBox(width: 10),
+            Expanded(child: _stat('4.8 ★', 'MA NOTE', C.cyan)),
+          ]),
+          const SizedBox(height: 20),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            syne('Livraisons récentes', 14, FontWeight.w600, C.t1),
+            GestureDetector(onTap: () => ctx.go('/client/history'), child: const Text('Voir tout →', style: TextStyle(fontSize: 11, color: C.cyan))),
+          ]),
+          const SizedBox(height: 8),
+          ...state.history.take(3).map((d) => LDCard(child: Row(children: [
+            Text(d['type'], style: const TextStyle(fontSize: 22)),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${d['from']} → ${d['to']}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+              Text('${d['price'].toStringAsFixed(2)} € · ${d['min']} min', style: GoogleFonts.spaceMono(fontSize: 10, color: C.t2)),
+            ])),
+            LDTag('✓ Livré', C.green),
+          ]))),
+        ]),
+      )),
+      bottomNavigationBar: _ClientNav(current: 0),
+    );
+  }
+
+  Widget _stat(String v, String l, Color c) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(color: C.s2, borderRadius: BorderRadius.circular(12), border: Border.all(color: C.border)),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(v, style: GoogleFonts.syne(fontSize: 22, fontWeight: FontWeight.w800, color: c)),
+      Text(l, style: GoogleFonts.spaceMono(fontSize: 10, color: C.t2)),
+    ]),
+  );
+}
+
+// ─── CREATE DELIVERY ──────────────────────
+class CreateDelivery extends StatefulWidget {
+  const CreateDelivery({super.key});
+  @override
+  State<CreateDelivery> createState() => _CreateState();
+}
+
+class _CreateState extends State<CreateDelivery> {
+  final _a = TextEditingController(text: '12 Rue de la Bastille, Paris');
+  final _b = TextEditingController(text: "8 Avenue de l'Opéra, Paris");
+  String _type = '📦 Colis';
+  final _types = ['📦 Colis', '🍔 Repas', '🛋️ Meuble', '📄 Document', '💊 Médicament', '🌸 Fleurs'];
+  bool _insured = true;
+
+  double get _price {
+    double base = 2.50 + 3.2 * 0.80;
+    if (_type.contains('Meuble')) base += 15;
+    if (_insured) base += 2;
+    return base;
+  }
+
+  @override
+  Widget build(BuildContext ctx) => Scaffold(
+    appBar: AppBar(leading: IconButton(icon: const Icon(Icons.arrow_back, size: 20, color: C.t1), onPressed: () => ctx.go('/client')), title: syne('Nouvelle livraison', 17, FontWeight.w700, C.t1)),
+    body: SafeArea(child: SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        LDCard(child: Column(children: [
+          Row(children: [
+            Column(children: [
+              Container(width: 10, height: 10, decoration: const BoxDecoration(color: C.yellow, shape: BoxShape.circle)),
+              Container(width: 1, height: 40, color: C.border),
+              Container(width: 10, height: 10, decoration: B
