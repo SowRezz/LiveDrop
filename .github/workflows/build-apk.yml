@@ -13,11 +13,13 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.6'
-      - name: Create app
+      - name: Create and inject LiveDrop
         run: |
           flutter create livedrop
           cd livedrop
           flutter pub add go_router provider google_fonts qr_flutter shared_preferences fl_chart intl uuid
+          unzip -o ../livedrop.zip "livedrop/lib/*" -d ../tmp/
+          cp -r ../tmp/livedrop/lib/* lib/
           flutter build apk --release --no-tree-shake-icons
       - uses: actions/upload-artifact@v4
         with:
